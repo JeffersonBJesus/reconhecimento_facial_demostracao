@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biometria Facial Educacional</title>
+    <!-- Tailwind CSS CDN para estilização rápida -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+        }
+        .container {
+            max-width: 90%;
+            margin: auto;
+            padding: 2rem;
+            background-color: #ffffff;
+            border-radius: 1rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        video {
+            border-radius: 0.75rem;
+            transform: scaleX(-1); /* Espelha a câmera para uma experiência mais natural */
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform: scaleX(-1); /* Espelha o canvas para corresponder ao vídeo */
+        }
+        .message-box {
+            background-color: #e0f2fe;
+            color: #0c4a6e;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-top: 1rem;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+    <div class="container flex flex-col items-center space-y-6">
+        <h1 class="text-4xl font-bold text-gray-800 mb-4">Biometria Facial Educacional</h1>
+        <p class="text-lg text-gray-600 text-center">
+            Este é um exemplo simples de detecção e "reconhecimento" facial para fins educacionais.
+            Clique em "Cadastrar Rosto" para salvar o rosto atual e depois veja se ele é reconhecido.
+        </p>
+
+        <div class="relative w-full max-w-lg bg-gray-900 rounded-xl overflow-hidden shadow-lg">
+            <video id="videoInput" autoplay muted class="w-full h-auto rounded-xl"></video>
+            <canvas id="overlayCanvas" class="absolute top-0 left-0"></canvas>
+        </div>
+
+        <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 w-full justify-center">
+            <button id="enrollButton" class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 transition-colors">
+                Cadastrar Rosto
+            </button>
+            <button id="clearButton" class="px-6 py-3 bg-red-500 text-white font-semibold rounded-lg shadow-md hover:bg-red-600 transition-colors">
+                Limpar Cadastro
+            </button>
+        </div>
+
+        <div id="messageBox" class="message-box w-full max-w-lg text-center hidden">
+            <!-- Mensagens do sistema aparecerão aqui -->
+        </div>
+
+        <div class="w-full max-w-lg mt-6 p-4 bg-gray-100 rounded-lg shadow-inner">
+            <h2 class="text-xl font-semibold text-gray-700 mb-2">Status:</h2>
+            <p id="statusText" class="text-gray-800">Aguardando câmera...</p>
+        </div>
+    </div>
+
+    <!-- face-api.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+    <script>
+        const video = document.getElementById('videoInput');
+        const canvas = document.getElementById('overlayCanvas');
+        const messageBox = document.getElementById('messageBox');
+        const statusText = document.getElementById('statusText');
+        const enrollButton = document.getElementById('enrollButton');
+        const clearButton = document.getElementById('clearButton');
+
+        let labeledFaceDescriptors = null; // Armazenará o descritor do rosto cadastrado
+        let faceMatcher = null; // Usado para comparar rostos
+        let modelsLoaded = false; // Flag para indicar se os modelos foram carregados
+
+        // Função para exibir mensagens na caixa de mensagem
+        function showMessage(message, type = 'info') {
+            messageBox.textContent = message;
+            messageBox.classList.remove('hidden', 'bg-red-200', 'text-red-800', 'bg-green-200', 'text-green-800');
+            if (type === 'error') {
+                messageBox.classList.add('bg-red-200', 'text-red-800');
+            } else if (type === 'success') {
+                messageBox.classList.add('bg-green-200', 'text-green-800');
+            } else {
+                messageBox.classList.add('bg-blue-200', 'text-blue-800');
+            }
+            messageBox.style.display = 'block'; // Garante que a caixa de mensagem esteja visível
+        }
+
+        // Função para ocultar a caixa de mensagem
+        function hideMessageBox() {
+            messageBox.style.display = 'none';
+            messageBox.classList.add('hidden');
+        }
+
+        // Carrega os modelos de face-api.js
+        async function loadModels() {
+            statusText.textContent = 'Carregando modelos de IA...';
+            // Caminho para os modelos no CDN
+            const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights/';
+            try {
+                await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+                await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+                modelsLoaded = true; // Define a flag como true após o carregamento bem-sucedido
+                statusText.textContent = 'Modelos carregados com sucesso!';
+                showMessage('Modelos de IA carregados. Permita o acesso à câmera.', 'success');
+            } catch (error) {
+                statusText.textContent = 'Erro ao carregar modelos.';
+                showMessage('Erro ao carregar modelos de IA. Verifique sua conexão ou o caminho dos modelos.', 'error');
+                console.error('Erro ao carregar modelos:', error);
+            }
+        }
+
+        // Inicia a câmera
+        async function startCamera() {
+            statusText.textContent = 'Iniciando câmera...';
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: {} });
+                video.srcObject = stream;
+                statusText.textContent = 'Câmera iniciada!';
+                showMessage('Câmera iniciada com sucesso! Ajuste seu rosto na tela.', 'success');
+            } catch (error) {
+                statusText.textContent = 'Erro ao acessar a câmera.';
+                showMessage('Erro ao acessar a câmera. Verifique as permissões do navegador.', 'error');
+                console.error('Erro ao acessar a câmera:', error);
+            }
+        }
+
+        // Evento quando o vídeo é carregado e pode ser reproduzido
+        video.addEventListener('play', () => {
+            // Ajusta o tamanho do canvas para corresponder ao vídeo
+            const displaySize = { width: video.videoWidth, height: video.videoHeight };
+            faceapi.matchDimensions(canvas, displaySize);
+
+            // Loop de detecção e reconhecimento
+            setInterval(async () => {
+                // Só executa a detecção se os modelos estiverem carregados
+                if (!modelsLoaded) {
+                    return;
+                }
+
+                const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
+
+                // Redimensiona as detecções para o tamanho do display
+                const resizedDetections = faceapi.resizeResults(detections, displaySize);
+
+                // Limpa o canvas antes de desenhar
+                canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+
+                // Desenha os retângulos e pontos faciais
+                faceapi.draw.drawDetections(canvas, resizedDetections);
+                faceapi.draw.drawFaceLandmarks(canvas, resizedDetections);
+
+                // Lógica de reconhecimento
+                if (faceMatcher && resizedDetections.length > 0) {
+                    resizedDetections.forEach(detection => {
+                        const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
+                        const box = detection.detection.box;
+                        const drawBox = new faceapi.draw.DrawBox(box, { label: bestMatch.toString() });
+                        drawBox.draw(canvas);
+
+                        // Atualiza o status com o resultado do reconhecimento
+                        if (bestMatch.label !== 'unknown') {
+                            statusText.textContent = `Rosto reconhecido: ${bestMatch.label} (Distância: ${bestMatch.distance.toFixed(2)})`;
+                        } else {
+                            statusText.textContent = `Rosto não reconhecido (Distância: ${bestMatch.distance.toFixed(2)})`;
+                        }
+                    });
+                } else if (resizedDetections.length > 0) {
+                    statusText.textContent = `Rosto(s) detectado(s). Clique em 'Cadastrar Rosto'.`;
+                } else {
+                    statusText.textContent = `Nenhum rosto detectado.`;
+                }
+            }, 100); // Executa a cada 100ms
+        });
+
+        // Evento do botão "Cadastrar Rosto"
+        enrollButton.addEventListener('click', async () => {
+            hideMessageBox();
+            // Garante que os modelos estejam carregados antes de tentar o cadastro
+            if (!modelsLoaded) {
+                showMessage('Aguarde o carregamento dos modelos de IA antes de cadastrar um rosto.', 'error');
+                return;
+            }
+            statusText.textContent = 'Tentando cadastrar rosto...';
+            const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
+
+            if (detections.length === 1) {
+                // Se um único rosto for detectado, use-o para o cadastro
+                const descriptor = detections[0].descriptor;
+                labeledFaceDescriptors = new faceapi.LabeledFaceDescriptors(
+                    'Aluno Cadastrado', // Nome para o rosto cadastrado
+                    [descriptor]
+                );
+                faceMatcher = new faceapi.FaceMatcher(labeledFaceDescriptors, 0.6); // 0.6 é um bom limite de tolerância
+                showMessage('Rosto cadastrado com sucesso! Agora o sistema tentará reconhecê-lo.', 'success');
+                statusText.textContent = 'Rosto cadastrado!';
+            } else if (detections.length > 1) {
+                showMessage('Muitos rostos detectados! Por favor, certifique-se de que apenas um rosto esteja visível para o cadastro.', 'error');
+                statusText.textContent = 'Erro no cadastro: Múltiplos rostos.';
+            } else {
+                showMessage('Nenhum rosto detectado para cadastro. Por favor, posicione seu rosto na frente da câmera.', 'error');
+                statusText.textContent = 'Erro no cadastro: Nenhum rosto.';
+            }
+        });
+
+        // Evento do botão "Limpar Cadastro"
+        clearButton.addEventListener('click', () => {
+            labeledFaceDescriptors = null;
+            faceMatcher = null;
+            showMessage('Cadastro de rosto limpo. O sistema não reconhecerá mais nenhum rosto.', 'info');
+            statusText.textContent = 'Cadastro limpo.';
+        });
+
+        // Inicializa o aplicativo
+        window.onload = async () => {
+            await loadModels();
+            await startCamera();
+        };
+    </script>
+</body>
+</html>
